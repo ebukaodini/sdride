@@ -1,4 +1,4 @@
-# sdride_sample
+# sdride
 
 A new Flutter project.
 

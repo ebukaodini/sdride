@@ -1,15 +1,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
-import 'package:sdride_sample/pages/directions_model.dart';
-import 'package:sdride_sample/pages/directions_repository.dart';
+import 'package:sdride/pages/directions_model.dart';
+import 'package:sdride/pages/directions_repository.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:location/location.dart';
-import 'package:sdride_sample/utils/functions.dart';
-import 'package:sdride_sample/widgets/error.dart';
-import 'package:sdride_sample/widgets/notice.dart';
-import 'package:sdride_sample/widgets/snackbar.dart';
-import 'package:sdride_sample/widgets/success.dart';
+import 'package:sdride/utils/functions.dart';
+import 'package:sdride/widgets/error.dart';
+import 'package:sdride/widgets/success.dart';
 
 class MapPage extends StatefulWidget {
   @override
@@ -278,17 +276,6 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-  // void addRiderMarker(LatLng pos) {
-  //   setState(() {
-  //     _travelOrigin = Marker(
-  //       markerId: const MarkerId('origin'),
-  //       infoWindow: const InfoWindow(title: 'Origin'),
-  //       icon: riderMarker!,
-  //       position: pos,
-  //     );
-  //   });
-  // }
-
   void addDriverMarker(LatLng pos, driverId) {
     try {
       setState(() {
@@ -342,7 +329,7 @@ class _MapPageState extends State<MapPage> {
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: travelDestination!,
-            zoom: 14,
+            zoom: 12,
           ),
         ),
       );

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:sdride_sample/pages/map.dart';
-import 'package:sdride_sample/pages/welcome.dart';
+import 'package:sdride/pages/map.dart';
+import 'package:sdride/pages/welcome.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 Future main() async {

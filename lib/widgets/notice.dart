@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
-import 'package:sdride_sample/utils/functions.dart';
+import 'package:sdride/utils/functions.dart';
 
 void notice(BuildContext context, String msg) {
   FToast ftoast = FToast();

@@ -1,10 +1,14 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
+import 'package:provider/provider.dart';
 import 'package:sdride/pages/directions_model.dart';
 import 'package:sdride/pages/directions_repository.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:location/location.dart';
+import 'package:sdride/providers/Driver.dart';
+import 'package:sdride/providers/Order.dart';
+import 'package:sdride/providers/Rider.dart';
 import 'package:sdride/utils/functions.dart';
 import 'package:sdride/widgets/error.dart';
 import 'package:sdride/widgets/success.dart';
@@ -24,6 +28,7 @@ class _MapPageState extends State<MapPage> {
 
   BitmapDescriptor? riderMarker;
   BitmapDescriptor? driverMarker;
+  Marker? pickupDriverMarker;
   BitmapDescriptor? originMarker;
   BitmapDescriptor? destinationMarker;
   BitmapDescriptor? travelDriverMarker;
@@ -50,7 +55,7 @@ class _MapPageState extends State<MapPage> {
     // await getChangingLocation();
     showOnlineDriversOnMap();
     setState(() => isPageReady = true);
-    await setTravelInfoForDriversOnMap();
+    // await setTravelInfoForDriversOnMap();
   }
 
   void setInitialCameraLocation() {
@@ -63,12 +68,38 @@ class _MapPageState extends State<MapPage> {
   }
 
   Future getChangingLocation() async {
-    location.onLocationChanged.listen((LocationData currentLocation) {
-      setState(() {
-        travelOrigin =
-            LatLng(currentLocation.latitude!, currentLocation.longitude!);
+    try {
+      Rider pRider = context.read<Rider>();
+      Driver pDriver = context.read<Driver>();
+      location.onLocationChanged.listen((LocationData currentLocation) async {
+        setState(() {
+          myLocation =
+              LatLng(currentLocation.latitude!, currentLocation.longitude!);
+        });
+        await pRider.updateLocation(myLocation!);
+
+        LatLng pos = await pDriver.getLocation();
+        // update the marker
+        setState(() {
+          pickupDriverMarker = Marker(
+            markerId: MarkerId("driver_${pDriver.driver!.id!}"),
+            infoWindow: const InfoWindow(title: 'Driver'),
+            icon: driverMarker!,
+            position: pos,
+            zIndex: 999,
+          );
+        });
+
+        // get travel details
+        Directions direction = await getDirection(pos, myLocation);
+        setState(() {
+          pickupTravelInfo =
+              "Driver is ${direction.totalDistance} away, Arriving in ${direction.totalDuration}.";
+        });
       });
-    });
+    } catch (e) {
+      error(context, e.toString());
+    }
   }
 
   Future getCurrentLocation() async {
@@ -100,12 +131,16 @@ class _MapPageState extends State<MapPage> {
 
       setState(
         () {
-          travelOrigin =
+          myLocation =
               LatLng(_locationData.latitude!, _locationData.longitude!);
+          travelOrigin = myLocation;
         },
       );
+
+      Rider pRider = context.read<Rider>();
+      await pRider.updateLocation(myLocation!);
     } catch (e) {
-      error(context, "Get Location Error: " + e.toString());
+      error(context, "Get Location Error: " + e.toString(), seconds: 20);
     }
   }
 
@@ -154,126 +189,137 @@ class _MapPageState extends State<MapPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        alignment: Alignment.center,
-        children: [
-          if (isPageReady == true)
-            GoogleMap(
-              myLocationEnabled: true,
-              indoorViewEnabled: true,
-              zoomControlsEnabled: false,
-              initialCameraPosition: initialCameraPosition!,
-              onMapCreated: (controller) => _googleMapController = controller,
-              markers: {
-                ...driverMarkers,
-                if (travelInfo != null && showTravelDirection == true)
-                  if (travelOriginMarker != null) travelOriginMarker!,
-                if (travelInfo != null && showTravelDirection == true)
-                  if (travelDestinationMarker != null) travelDestinationMarker!,
-              },
-              polylines: {
-                // travel polyline
-                if (travelInfo != null && showTravelDirection == true)
-                  Polyline(
-                    polylineId: const PolylineId('travel_polyline'),
-                    color: Colors.blue.shade900,
-                    width: 10,
-                    startCap: Cap.roundCap,
-                    endCap: Cap.roundCap,
-                    jointType: JointType.round,
-                    points: travelInfo!.polylinePoints!
-                        .map((e) => LatLng(e.latitude, e.longitude))
-                        .toList(),
+    return Consumer<Rider>(builder: (BuildContext context, pRider, child) {
+      return Consumer<Driver>(builder: (BuildContext context, pDriver, child) {
+        return Consumer<Order>(builder: (BuildContext context, pOrder, child) {
+          return Scaffold(
+            body: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (isPageReady == true)
+                  GoogleMap(
+                    myLocationEnabled: true,
+                    indoorViewEnabled: true,
+                    zoomControlsEnabled: false,
+                    initialCameraPosition: initialCameraPosition!,
+                    onMapCreated: (controller) =>
+                        _googleMapController = controller,
+                    markers: {
+                      ...driverMarkers,
+                      if (pickupDriverMarker != null) pickupDriverMarker!,
+                      if (travelInfo != null && showTravelDirection == true)
+                        if (travelOriginMarker != null) travelOriginMarker!,
+                      if (travelInfo != null && showTravelDirection == true)
+                        if (travelDestinationMarker != null)
+                          travelDestinationMarker!,
+                    },
+                    polylines: {
+                      // travel polyline
+                      if (travelInfo != null && showTravelDirection == true)
+                        Polyline(
+                          polylineId: const PolylineId('travel_polyline'),
+                          color: Colors.blue.shade900,
+                          width: 10,
+                          startCap: Cap.roundCap,
+                          endCap: Cap.roundCap,
+                          jointType: JointType.round,
+                          points: travelInfo!.polylinePoints!
+                              .map((e) => LatLng(e.latitude, e.longitude))
+                              .toList(),
+                        ),
+                    },
                   ),
-              },
-            ),
 
-          // show loading while page is loading
-          if (isPageReady == false)
-            Center(
-              child: CircularProgressIndicator(),
-            ),
-
-          if (isPageReady == true)
-            Positioned(
-              top: 50,
-              left: 20,
-              child: FloatingActionButton(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.black,
-                onPressed: () => Navigator.pop(context),
-                child: Icon(Icons.arrow_back_rounded),
-              ),
-            ),
-
-          if (isPageReady == true)
-            // display the info distance and time estimation info
-            if (travelInfo != null && showTravelDirection == true)
-              Positioned(
-                top: 50,
-                right: 20,
-                height: 55,
-                width: screen(context).width * 0.6,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(50),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        offset: Offset(0, 2),
-                        blurRadius: 6.0,
-                      )
-                    ],
+                // show loading while page is loading
+                if (isPageReady == false)
+                  Center(
+                    child: CircularProgressIndicator(),
                   ),
-                  child: Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      '${travelInfo!.totalDistance}, ${travelInfo!.totalDuration}',
-                      style: const TextStyle(
-                        fontSize: 18.0,
-                        fontWeight: FontWeight.w600,
-                      ),
+
+                if (isPageReady == true)
+                  Positioned(
+                    top: 50,
+                    left: 20,
+                    child: FloatingActionButton(
+                      backgroundColor: Theme.of(context).primaryColor,
+                      foregroundColor: Colors.black,
+                      onPressed: () => Navigator.pop(context),
+                      child: Icon(Icons.arrow_back_rounded),
                     ),
                   ),
-                ),
-              ),
 
-          DraggableScrollableSheet(
-            initialChildSize: 0.30,
-            minChildSize: 0.20,
-            maxChildSize: 0.30,
-            builder: (BuildContext context, ScrollController scrollController) {
-              return SingleChildScrollView(
-                controller: scrollController,
-                child: Container(
-                  margin: EdgeInsets.only(top: 10),
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.shade300,
-                        blurRadius: 5.0,
-                        spreadRadius: 5,
-                        offset: Offset.zero,
+                if (isPageReady == true)
+                  // display the info distance and time estimation info
+                  if (travelInfo != null && showTravelDirection == true)
+                    Positioned(
+                      top: 50,
+                      right: 20,
+                      height: 55,
+                      width: screen(context).width * 0.6,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(50),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black26,
+                              offset: Offset(0, 2),
+                              blurRadius: 6.0,
+                            )
+                          ],
+                        ),
+                        child: Align(
+                          alignment: Alignment.center,
+                          child: Text(
+                            '${travelInfo!.totalDistance}, ${travelInfo!.totalDuration}',
+                            style: const TextStyle(
+                              fontSize: 18.0,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
                       ),
-                    ],
-                    color: Colors.white,
-                  ),
-                  child: bottomSheetPage == BottomSheetPage.SELECT_DESTINATION
-                      ? selectDestination()
-                      : bottomSheetPage == BottomSheetPage.SELECT_PICKUP_DRIVER
-                          ? selectPickupDriver()
-                          : showPickupDriver(),
+                    ),
+
+                DraggableScrollableSheet(
+                  initialChildSize: 0.30,
+                  minChildSize: 0.20,
+                  maxChildSize: 0.30,
+                  builder: (BuildContext context,
+                      ScrollController scrollController) {
+                    return SingleChildScrollView(
+                      controller: scrollController,
+                      child: Container(
+                        margin: EdgeInsets.only(top: 10),
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.grey.shade300,
+                              blurRadius: 5.0,
+                              spreadRadius: 5,
+                              offset: Offset.zero,
+                            ),
+                          ],
+                          color: Colors.white,
+                        ),
+                        child: bottomSheetPage ==
+                                BottomSheetPage.SELECT_DESTINATION
+                            ? showSelectDestination()
+                            : bottomSheetPage == BottomSheetPage.CONFIRM_ORDER
+                                ? showConfirmOrder()
+                                : showPickupDriver(),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
+              ],
+            ),
+          );
+        });
+      });
+    });
   }
 
   void addDriverMarker(LatLng pos, driverId) {
@@ -293,49 +339,6 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  void addTravelMarker() {
-    setState(() {
-      travelOriginMarker = Marker(
-        markerId: const MarkerId('origin'),
-        infoWindow: const InfoWindow(title: 'Origin'),
-        icon: originMarker!,
-        position: travelOrigin!,
-        zIndex: 99,
-      );
-      travelDestinationMarker = Marker(
-        markerId: const MarkerId('destination'),
-        infoWindow: const InfoWindow(title: 'Destination'),
-        icon: destinationMarker!,
-        position: travelDestination!,
-        zIndex: 99,
-      );
-    });
-  }
-
-  Future setTravelDirection() async {
-    // Get travel directions
-    if (travelOrigin != null && travelDestination != null) {
-      final directions = await DirectionsRepository().getDirections(
-        origin: travelOrigin,
-        destination: travelDestination,
-      );
-
-      setState(() {
-        travelInfo = directions;
-        showTravelDirection = true;
-      });
-
-      _googleMapController?.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: travelDestination!,
-            zoom: 12,
-          ),
-        ),
-      );
-    }
-  }
-
   Future<Directions> getDirection(LatLng? origin, LatLng? destination) async {
     // Get directions
     Directions directions = await DirectionsRepository().getDirections(
@@ -351,6 +354,7 @@ class _MapPageState extends State<MapPage> {
   bool showDrivers = false;
   double? zoomLevel = 16;
 
+  LatLng? myLocation;
   LatLng? travelOrigin;
   LatLng? travelDestination;
   Marker? travelOriginMarker;
@@ -359,16 +363,60 @@ class _MapPageState extends State<MapPage> {
   BottomSheetPage bottomSheetPage = BottomSheetPage.SELECT_DESTINATION;
   dynamic pickupDriver;
   LatLng? pickupDriverLocation;
-  Directions? pickupTravelInfo;
+  String? pickupTravelInfo = '';
+  dynamic selectedDestination;
 
-  Future chooseDestination(destination) async {
-    setState(() {
-      travelDestination = LatLng(destination['lat'], destination['lng']);
+  dynamic onlineDrivers = [
+    {
+      'id': 12341,
+      'car': 'Toyota Camry',
+      'lat': 6.515163147958853,
+      'lng': 3.31046249717474,
+      'travelInfo': '',
+      'detailedTravelInfo': ''
+    },
+    {
+      'id': 12342,
+      'car': 'Toyota Matrix',
+      'lat': 6.513377004308796,
+      'lng': 3.3138377219438553,
+      'travelInfo': '',
+      'detailedTravelInfo': ''
+    },
+    {
+      'id': 12343,
+      'car': 'Toyota Corolla',
+      'lat': 6.51361151513941,
+      'lng': 3.3139265701174736,
+      'travelInfo': '',
+      'detailedTravelInfo': ''
+    },
+    {
+      'id': 12344,
+      'car': 'Honda Accord',
+      'lat': 6.51320978203025,
+      'lng': 3.3138196170330048,
+      'travelInfo': '',
+      'detailedTravelInfo': ''
+    },
+    {
+      'id': 12345,
+      'car': 'Kia',
+      'lat': 6.512523237390371,
+      'lng': 3.3140774443745618,
+      'travelInfo': '',
+      'detailedTravelInfo': ''
+    },
+  ];
+
+  void showOnlineDriversOnMap() {
+    onlineDrivers.forEach((driver) {
+      // parse drivers location to latlng values
+      LatLng driverPos = LatLng(double.parse(driver['lat'].toString()),
+          double.parse(driver['lng'].toString()));
+
+      addDriverMarker(driverPos, driver['id']);
     });
-
-    await setTravelDirection();
-    addTravelMarker();
-    bottomSheetPage = BottomSheetPage.SELECT_PICKUP_DRIVER;
   }
 
   void setPickupDriverMarker() {
@@ -433,7 +481,7 @@ class _MapPageState extends State<MapPage> {
   }
 
   // Select Destination Sheet
-  Widget selectDestination() {
+  Widget showSelectDestination() {
     return Column(
       children: <Widget>[
         SizedBox(height: 12),
@@ -540,6 +588,355 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  Future chooseDestination(destination) async {
+    try {
+      setState(() {
+        travelDestination = LatLng(destination['lat'], destination['lng']);
+        selectedDestination = destination;
+      });
+
+      await setTravelDirection();
+      addTravelMarker();
+
+      setState(() {
+        bottomSheetPage = BottomSheetPage.CONFIRM_ORDER;
+      });
+    } catch (e) {
+      error(context, e.toString());
+    }
+  }
+
+  Future setTravelDirection() async {
+    try {
+      // Get travel directions
+      if (travelOrigin != null && travelDestination != null) {
+        final directions = await DirectionsRepository().getDirections(
+          origin: travelOrigin,
+          destination: travelDestination,
+        );
+
+        setState(() {
+          travelInfo = directions;
+          showTravelDirection = true;
+        });
+
+        _googleMapController?.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: travelDestination!,
+              zoom: 12,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      error(context, e.toString(), seconds: 50);
+    }
+  }
+
+  void addTravelMarker() {
+    setState(() {
+      travelOriginMarker = Marker(
+        markerId: const MarkerId('origin'),
+        infoWindow: const InfoWindow(title: 'Origin'),
+        icon: originMarker!,
+        position: travelOrigin!,
+        zIndex: 99,
+      );
+      travelDestinationMarker = Marker(
+        markerId: const MarkerId('destination'),
+        infoWindow: const InfoWindow(title: 'Destination'),
+        icon: destinationMarker!,
+        position: travelDestination!,
+        zIndex: 99,
+      );
+    });
+  }
+
+  // confirm order
+  Widget showConfirmOrder() {
+    return Column(
+      children: <Widget>[
+        SizedBox(height: 12),
+        Container(
+          height: 5,
+          width: 60,
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        SizedBox(height: 16),
+        Container(
+          height: 50,
+          width: screen(context).width,
+          child: Stack(
+            alignment: Alignment.topCenter,
+            children: [
+              Positioned(
+                left: 20,
+                child: BackButton(
+                  color: Colors.black54,
+                  onPressed: () {
+                    setState(() {
+                      bottomSheetPage = BottomSheetPage.SELECT_DESTINATION;
+                      travelInfo = null;
+                      showTravelDirection = false;
+                    });
+                  },
+                ),
+              ),
+              Positioned(
+                top: 10,
+                child: Text(
+                  "Confirm Ride",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 10),
+        ListTile(
+          leading: Image.asset(
+            'assets/markers/destination.png',
+            fit: BoxFit.cover,
+            width: 60,
+          ),
+          title: Text(
+            "${selectedDestination['name']}",
+            maxLines: 1,
+            textAlign: TextAlign.start,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 20,
+              color: Colors.black54,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          subtitle: Text(
+            "${selectedDestination['address']}",
+            maxLines: 1,
+            textAlign: TextAlign.start,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.black45,
+            ),
+          ),
+          enableFeedback: true,
+        ),
+        Text(
+          "Journey is ${travelInfo!.totalDistance} far and takes about ${travelInfo!.totalDuration}",
+          maxLines: 2,
+          overflow: TextOverflow.visible,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 16,
+            color: Colors.black45,
+          ),
+        ),
+        SizedBox(height: 20),
+        SizedBox(
+          width: screen(context).width * 0.9,
+          child: ElevatedButton(
+            onPressed: confirmOrder,
+            child: Text('Confirm Ride'),
+          ),
+        ),
+        SizedBox(height: 30),
+      ],
+    );
+  }
+
+  Future confirmOrder() async {
+    try {
+      Order pOrder = context.read<Order>();
+      Rider pRider = context.read<Rider>();
+      await pOrder.createOrder(
+          pRider.rider!, travelOrigin!, selectedDestination);
+      success(context, 'Order created');
+
+      setState(() {
+        bottomSheetPage = BottomSheetPage.SHOW_PICKUP_DRIVER;
+      });
+    } catch (e) {
+      error(context, e.toString());
+    }
+  }
+
+  // Show Pickup Driver
+  Widget showPickupDriver() {
+    Order pOrder = context.read<Order>();
+    return Column(
+      children: <Widget>[
+        SizedBox(height: 12),
+        Container(
+          height: 5,
+          width: 60,
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        SizedBox(height: 16),
+        Container(
+          width: screen(context).width,
+          height: 50,
+          child: Stack(
+            alignment: Alignment.topCenter,
+            children: [
+              // Positioned(
+              //   left: 20,
+              //   child: BackButton(
+              //     color: Colors.black54,
+              //     onPressed: () {
+              //       setState(() {
+              //         bottomSheetPage = BottomSheetPage.SHOW_PICKUP_DRIVER;
+              //         revertPickupDriverMarker();
+              //       });
+              //     },
+              //   ),
+              // ),
+              Positioned(
+                top: 10,
+                child: Text(
+                  "Pickup Driver",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 10),
+        if (pOrder.order!.isPending == true) awaitingDriver(),
+        if (pOrder.order!.isAccepted == true) ...driverDetails(),
+        SizedBox(height: 30),
+      ],
+    );
+  }
+
+  List<Widget> driverDetails() {
+    Driver pDriver = context.read<Driver>();
+    return [
+      ListTile(
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            Image.asset(
+              'assets/markers/travelDriver.png',
+              fit: BoxFit.cover,
+              width: 60,
+            ),
+            Column(
+              children: [
+                Text(
+                  pDriver.driver!.name!,
+                  maxLines: 1,
+                  textAlign: TextAlign.start,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  pDriver.driver!.car!,
+                  maxLines: 1,
+                  textAlign: TextAlign.start,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 20,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            )
+          ],
+        ),
+        enableFeedback: true,
+      ),
+      SizedBox(height: 16),
+      Text(
+        pickupTravelInfo!,
+        maxLines: 2,
+        overflow: TextOverflow.visible,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 16,
+          color: Colors.black45,
+        ),
+      ),
+    ];
+  }
+
+  Widget awaitingDriver() {
+    Order pOrder = context.read<Order>();
+    Driver pDriver = context.read<Driver>();
+    return Container(
+      width: screen(context).width * 0.9,
+      child: Column(
+        children: [
+          Text('Fetching your driver...'),
+          Text('Click to reload'),
+          SizedBox(height: 20),
+          SizedBox(
+            width: screen(context).width * 0.9,
+            child: ElevatedButton(
+              onPressed: () async {
+                bool status = await pOrder.isOrderAccepted(pDriver);
+
+                if (status == true) {
+                  // get the distance / destination details
+                  Directions direction =
+                      await getDirection(pDriver.driver!.location!, myLocation);
+                  setState(() {
+                    pickupTravelInfo =
+                        "Driver is ${direction.totalDistance} away, Arriving in ${direction.totalDuration}.";
+                    pOrder.order?.isPending = false;
+                    pOrder.order?.isAccepted = true;
+                  });
+                }
+
+                pickupDriverMarker = Marker(
+                  markerId: MarkerId("driver_${pDriver.driver?.id}"),
+                  infoWindow: const InfoWindow(title: 'Pickup Driver'),
+                  icon: travelDriverMarker!,
+                  position: pDriver.driver!.location!,
+                  zIndex: 999,
+                );
+
+                // set camera to selected driver
+                _googleMapController?.animateCamera(
+                  CameraUpdate.newCameraPosition(
+                    CameraPosition(
+                      target: pDriver.driver!.location!,
+                      zoom: 20,
+                    ),
+                  ),
+                );
+              },
+              child: Text('Reload'),
+            ),
+          ),
+          SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
   // Select Driver Sheet
   Widget selectPickupDriver() {
     return Column(
@@ -593,59 +990,6 @@ class _MapPageState extends State<MapPage> {
         SizedBox(height: 16),
       ],
     );
-  }
-
-  dynamic onlineDrivers = [
-    {
-      'id': 12341,
-      'car': 'Toyota Camry',
-      'lat': 6.515163147958853,
-      'lng': 3.31046249717474,
-      'travelInfo': '',
-      'detailedTravelInfo': ''
-    },
-    {
-      'id': 12342,
-      'car': 'Toyota Matrix',
-      'lat': 6.513377004308796,
-      'lng': 3.3138377219438553,
-      'travelInfo': '',
-      'detailedTravelInfo': ''
-    },
-    {
-      'id': 12343,
-      'car': 'Toyota Corolla',
-      'lat': 6.51361151513941,
-      'lng': 3.3139265701174736,
-      'travelInfo': '',
-      'detailedTravelInfo': ''
-    },
-    {
-      'id': 12344,
-      'car': 'Honda Accord',
-      'lat': 6.51320978203025,
-      'lng': 3.3138196170330048,
-      'travelInfo': '',
-      'detailedTravelInfo': ''
-    },
-    {
-      'id': 12345,
-      'car': 'Kia',
-      'lat': 6.512523237390371,
-      'lng': 3.3140774443745618,
-      'travelInfo': '',
-      'detailedTravelInfo': ''
-    },
-  ];
-
-  void showOnlineDriversOnMap() {
-    onlineDrivers.forEach((driver) {
-      // parse drivers location to latlng values
-      LatLng driverPos = LatLng(double.parse(driver['lat'].toString()),
-          double.parse(driver['lng'].toString()));
-
-      addDriverMarker(driverPos, driver['id']);
-    });
   }
 
   Future setTravelInfoForDriversOnMap() async {
@@ -716,158 +1060,10 @@ class _MapPageState extends State<MapPage> {
       onTap: () => choosePickupDriver(driver),
     );
   }
-
-  // Select Driver Sheet
-  Widget showPickupDriver() {
-    return Column(
-      children: <Widget>[
-        SizedBox(height: 12),
-        Container(
-          height: 5,
-          width: 60,
-          decoration: BoxDecoration(
-            color: Colors.grey[200],
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        SizedBox(height: 16),
-        Container(
-          width: screen(context).width,
-          height: 50,
-          child: Stack(
-            alignment: Alignment.topCenter,
-            children: [
-              Positioned(
-                left: 20,
-                child: BackButton(
-                  color: Colors.black54,
-                  onPressed: () {
-                    setState(() {
-                      bottomSheetPage = BottomSheetPage.SELECT_PICKUP_DRIVER;
-                      revertPickupDriverMarker();
-                    });
-                  },
-                ),
-              ),
-              Positioned(
-                top: 10,
-                child: Text(
-                  "Pickup Driver",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 22,
-                    color: Colors.black54,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        SizedBox(height: 10),
-        ListTile(
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              Image.asset(
-                'assets/markers/travelDriver.png',
-                fit: BoxFit.cover,
-                width: 60,
-              ),
-              Text(
-                pickupDriver['car'],
-                maxLines: 1,
-                textAlign: TextAlign.start,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 20,
-                  color: Colors.black54,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          enableFeedback: true,
-        ),
-        Text(
-          pickupDriver['detailedTravelInfo'],
-          maxLines: 2,
-          overflow: TextOverflow.visible,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 16,
-            color: Colors.black45,
-          ),
-        ),
-        SizedBox(height: 20),
-        SizedBox(
-          width: screen(context).width * 0.8,
-          child: ElevatedButton(
-            onPressed: () {
-              success(context, 'Ride is confirmed');
-            },
-            child: Text('Confirm Ride'),
-          ),
-        ),
-        SizedBox(height: 30),
-      ],
-    );
-  }
 }
 
 enum BottomSheetPage {
   SELECT_DESTINATION,
-  SELECT_PICKUP_DRIVER,
+  CONFIRM_ORDER,
   SHOW_PICKUP_DRIVER,
 }
-
-// appBar: AppBar(
-//   centerTitle: false,
-//   title: const Text('SD Rides'),
-//   actions: [
-//     if (_travelOrigin != null)
-//       TextButton(
-//         onPressed: () => _googleMapController?.animateCamera(
-//           CameraUpdate.newCameraPosition(
-//             CameraPosition(
-//               target: _travelOrigin!.position,
-//               zoom: 16,
-//               tilt: 50.0,
-//             ),
-//           ),
-//         ),
-//         style: TextButton.styleFrom(
-//           primary: Colors.green,
-//           textStyle: const TextStyle(fontWeight: FontWeight.w600),
-//         ),
-//         child: const Text('ORIGIN'),
-//       ),
-//     if (_travelDestination != null)
-//       TextButton(
-// onPressed: () => _googleMapController?.animateCamera(
-//   CameraUpdate.newCameraPosition(
-//     CameraPosition(
-//       target: _travelDestination!.position,
-//       zoom: 16,
-//       tilt: 50.0,
-//     ),
-//   ),
-// ),
-//         style: TextButton.styleFrom(
-//           primary: Colors.blue,
-//           textStyle: const TextStyle(fontWeight: FontWeight.w600),
-//         ),
-//         child: const Text('DEST'),
-//       )
-//   ],
-// ),
-// floatingActionButton: FloatingActionButton(
-//   backgroundColor: Theme.of(context).primaryColor,
-//   foregroundColor: Colors.black,
-//   onPressed: () => _googleMapController?.animateCamera(
-//     travelInfo != null
-//         ? CameraUpdate.newLatLngBounds(travelInfo!.bounds!, 100.0)
-//         : CameraUpdate.newCameraPosition(initialCameraPosition!),
-//   ),
-//   child: const Icon(Icons.center_focus_strong),
-// ),

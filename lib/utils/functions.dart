@@ -13,3 +13,9 @@ String stripExceptions(errmsg) {
   print(errmsg);
   return errmsg.toString().replaceAll("Exception: ", "");
 }
+
+void scream(String input) {
+  print("\n\n\n\n");
+  print(input);
+  print("\n\n\n\n");
+}
